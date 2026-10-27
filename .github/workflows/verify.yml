@@ -1,0 +1,41 @@
+name: Verify source
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  tests:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 22
+          - os: ubuntu-latest
+            node: 24
+          - os: windows-latest
+            node: 22
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t hongguo-car-web:test .
+      - name: Check isolated service
+        shell: bash
+        run: |
+          docker run -d --name hg-test -p 127.0.0.1:8790:8790 -e APP_PASSWORD=ci-only-password-12345 hongguo-car-web:test
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8790/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs hg-test
+          exit 1

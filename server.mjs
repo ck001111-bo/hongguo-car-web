@@ -15,7 +15,7 @@ const same=(a,b)=>crypto.timingSafeEqual(hash(a),hash(b));
 export function createApp({source=provider,password,secureCookie=false}={}) {
   if(!password || password.length<12) throw Error('访问密码至少需要 12 个字符');
   const server=http.createServer(async(req,res)=>{
-    const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
+    const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
     const json=(status,value)=>{res.writeHead(status,{...headers,'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value));};
     let url;
     try{url=new URL(req.url,'http://localhost');}catch{return json(400,{error:'请求地址无效'});}
@@ -48,7 +48,14 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
         const file=files[url.pathname],content=await fs.readFile(path.join(root,'public',file));
         res.writeHead(200,{...headers,'Content-Type':file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8'});return res.end(req.method==='HEAD'?undefined:content);
       }
-      if(!logged)return json(401,{error:'请先输入访问密码'});
+      const mediaRequest=url.pathname.match(/^\/media\/([a-f0-9]{48})$/);
+      let mediaAccess=false;
+      if(!logged&&!token&&mediaRequest&&['GET','HEAD'].includes(req.method)){
+        const entry=streams.get(mediaRequest[1]),access=url.searchParams.get('access');
+        const owner=entry&&sessions.get(entry.owner);
+        mediaAccess=!!entry&&entry.expires>Date.now()&&!!owner&&owner.expires>Date.now()&&typeof access==='string'&&same(access,entry.access);
+      }
+      if(!logged&&!mediaAccess)return json(401,{error:'请先输入访问密码'});
       if(url.pathname==='/api/logout'&&req.method==='POST'){sessions.delete(token);res.setHeader('Set-Cookie',`${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);return json(200,{ok:true});}
       if(!['GET','HEAD'].includes(req.method))return json(405,{error:'请求方式不支持'});
       const page=Number(url.searchParams.get('page')||1);
@@ -63,13 +70,14 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
       const play=url.pathname.match(/^\/api\/episodes\/(\d{1,30})\/play$/);
       if(play){
         const id=crypto.randomBytes(24).toString('hex');const media=await source.stream(play[1],true);
-        streams.set(id,{owner:token,media,expires:Date.now()+30*60_000});
+        const access=crypto.randomBytes(24).toString('hex');
+        streams.set(id,{owner:token,access,media,expires:Date.now()+30*60_000});
         while(streams.size>24)streams.delete(streams.keys().next().value);
-        return json(200,{path:'/media/'+id,bytes:media.total,episode:play[1]});
+        return json(200,{path:'/media/'+id+'?access='+access,bytes:media.total,episode:play[1]});
       }
       const stream=url.pathname.match(/^\/media\/([a-f0-9]{48})$/);
       if(stream){
-        const entry=streams.get(stream[1]);if(!entry||entry.owner!==token||entry.expires<Date.now())return json(410,{error:'播放地址已过期，请重新选集'});
+        const entry=streams.get(stream[1]);if(!entry||(!mediaAccess&&entry.owner!==token)||entry.expires<Date.now()||!sessions.has(entry.owner))return json(410,{error:'播放地址已过期，请重新选集'});
         const total=entry.media.total;const match=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range||'');
         if(req.headers.range&&!match){res.writeHead(416,{...headers,'Content-Range':`bytes */${total}`});return res.end();}
         let start=0,end=total-1;
