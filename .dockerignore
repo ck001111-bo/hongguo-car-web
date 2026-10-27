@@ -1,0 +1,12 @@
+node_modules
+.private-config.json
+.device.json
+access.txt
+*.log
+tests
+bin
+.runtime
+.microsoft-tunnel.json
+
+.local-runtime.json
+.git

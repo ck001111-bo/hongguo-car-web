@@ -1,0 +1,12 @@
+node_modules/
+.private-config.json
+.device.json
+access.txt
+*.log
+.runtime/
+.microsoft-tunnel.json
+
+.git/
+.local-runtime.json
+bin/*.exe
+tools/**/*.apk
