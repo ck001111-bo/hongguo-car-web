@@ -4,10 +4,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {gzipSync} from 'node:zlib';
 import {provider} from './provider.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const sessions=new Map(), streams=new Map(), attempts=new Map();
+const staticFiles=new Map();
 const COOKIE='hg_session';
 const MAX_SESSION=7*24*3600_000;
 const hash=x=>crypto.createHash('sha256').update(x).digest();
@@ -45,8 +47,10 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
       if(url.pathname==='/health')return json(200,{service:'hongguo-web',status:'running',playback:'unverified'});
       const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/hls.min.js':'hls.min.js'};
       if(files[url.pathname] && ['GET','HEAD'].includes(req.method)){
-        const file=files[url.pathname],content=await fs.readFile(path.join(root,'public',file));
-        res.writeHead(200,{...headers,'Content-Type':file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8'});return res.end(req.method==='HEAD'?undefined:content);
+        const file=files[url.pathname];
+        if(!staticFiles.has(file)){const plain=await fs.readFile(path.join(root,'public',file));staticFiles.set(file,{plain,gzip:gzipSync(plain)});}
+        const compressed=/\bgzip\b/.test(req.headers['accept-encoding']||'');const content=staticFiles.get(file)[compressed?'gzip':'plain'];
+        res.writeHead(200,{...headers,'Content-Type':file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8','Content-Length':content.length,'Vary':'Accept-Encoding',...(compressed?{'Content-Encoding':'gzip'}:{})});return res.end(req.method==='HEAD'?undefined:content);
       }
       const mediaRequest=url.pathname.match(/^\/media\/([a-f0-9]{48})(?:\/(index\.m3u8|segment-\d{5}\.ts))?$/);
       let mediaAccess=false;

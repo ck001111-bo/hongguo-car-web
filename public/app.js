@@ -12,6 +12,7 @@ async function api(url,options={}){const r=await fetch(url,options);let d;try{d=
 function showLogin(){prefetches.clear();$('#login').hidden=false;$('#app').hidden=true;$('#player-dialog').close();$('#video').pause();}
 function showApp(){$('#login').hidden=true;$('#app').hidden=false;load(true);}
 $('#login-form').onsubmit=async e=>{e.preventDefault();$('#login-error').textContent='';const b=e.submitter;b.disabled=true;try{await api('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('#password').value})});$('#password').value='';showApp();}catch(e){$('#login-error').textContent=e.message;}finally{b.disabled=false;}};
+$('#login-form button').disabled=false;
 $('#logout').onclick=async()=>{await api('/api/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});showLogin();};
 function renderCards(){const grid=$('#cards');grid.replaceChildren();for(const item of items){const card=el('button','card'),poster=el('div','poster');poster.append(el('span','placeholder',item.title.slice(0,4)));if(item.cover){try{const u=new URL(item.cover);if(u.protocol==='https:'){const img=el('img');img.src=u.href;img.alt=item.title;img.loading='lazy';img.referrerPolicy='no-referrer';img.onerror=()=>img.remove();poster.append(img);}}catch{}}
 if(item.badge)poster.append(el('span','badge',item.badge));card.append(poster,el('h3','',item.title),el('p','muted',item.tags||'短剧'));card.onclick=()=>openSeries(item);grid.append(card);}$('#count').textContent=items.length?`${items.length} 部剧`:'';}
