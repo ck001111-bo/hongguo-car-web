@@ -10,3 +10,5 @@ HGTV 1.2.2.1 和 1.2.6 APK 的静态分析用于核对其设备注册、接口�
 
 本项目与红果官方无关联，不保证平台非官方接口持续可用。
 
+
+浏览器 HLS 播放使用 hls.js 1.6.16（Apache-2.0），分发文件 public/hls.min.js，许可证 vendor/LICENSE.hls.js。

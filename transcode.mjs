@@ -9,7 +9,7 @@ function fileMedia(output,total){return {total,chunk:async(start,end)=>{const fi
 export async function cachedBrowserMedia(id){
  if(!/^\d{1,30}$/.test(id))return null;
  const output=new URL(id+suffix,directory);
- try{const stat=await fs.stat(output);if(stat.size>0&&Date.now()-stat.mtimeMs<2*3600000)return fileMedia(output,stat.size);}catch{}
+ try{const stat=await fs.stat(output);if(stat.size>0&&Date.now()-stat.mtimeMs<24*3600000)return fileMedia(output,stat.size);}catch{}
  return null;
 }
 export async function browserCompatible(id,media){
@@ -27,7 +27,7 @@ async function download(media,input){
  }finally{await handle.close();}
 }
 async function cleanup(){
- try{for(const entry of await fs.readdir(directory)){if(!/^\d+-(car-v2|browser|source|partial)\.mp4$/.test(entry))continue;const file=new URL(entry,directory);const stat=await fs.stat(file);if(Date.now()-stat.mtimeMs>3*3600000)await fs.rm(file,{force:true});}}catch{}
+ try{for(const entry of await fs.readdir(directory)){if(!/^\d+-(car-v2|browser|source|partial)\.mp4$/.test(entry))continue;const file=new URL(entry,directory);const stat=await fs.stat(file);if(Date.now()-stat.mtimeMs>25*3600000)await fs.rm(file,{force:true});}}catch{}
 }
 async function convert(id,media){
  if(!/^\d{1,30}$/.test(id)||!Number.isSafeInteger(media.total)||media.total<=0||media.total>200*1024*1024)throw Error('视频大小超出处理限制');

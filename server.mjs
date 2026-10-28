@@ -5,7 +5,6 @@ import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {provider} from './provider.mjs';
-import {storedDeviceStatus} from './device.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const sessions=new Map(), streams=new Map(), attempts=new Map();
@@ -16,7 +15,7 @@ const same=(a,b)=>crypto.timingSafeEqual(hash(a),hash(b));
 export function createApp({source=provider,password,secureCookie=false}={}) {
   if(!password || password.length<12) throw Error('访问密码至少需要 12 个字符');
   const server=http.createServer(async(req,res)=>{
-    const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
+    const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
     const json=(status,value)=>{res.writeHead(status,{...headers,'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value));};
     let url;
     try{url=new URL(req.url,'http://localhost');}catch{return json(400,{error:'请求地址无效'});}
@@ -43,13 +42,13 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
         return json(200,{ok:true});
       }
       if(url.pathname==='/api/session')return json(200,{authenticated:logged});
-      if(url.pathname==='/health')return json(200,{service:'hongguo-web',status:'running',playback:'unverified',device:storedDeviceStatus()});
-      const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css'};
+      if(url.pathname==='/health')return json(200,{service:'hongguo-web',status:'running',playback:'unverified'});
+      const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/hls.min.js':'hls.min.js'};
       if(files[url.pathname] && ['GET','HEAD'].includes(req.method)){
         const file=files[url.pathname],content=await fs.readFile(path.join(root,'public',file));
         res.writeHead(200,{...headers,'Content-Type':file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/javascript; charset=utf-8'});return res.end(req.method==='HEAD'?undefined:content);
       }
-      const mediaRequest=url.pathname.match(/^\/media\/([a-f0-9]{48})$/);
+      const mediaRequest=url.pathname.match(/^\/media\/([a-f0-9]{48})(?:\/(index\.m3u8|segment-\d{5}\.ts))?$/);
       let mediaAccess=false;
       if(!logged&&!token&&mediaRequest&&['GET','HEAD'].includes(req.method)){
         const entry=streams.get(mediaRequest[1]),access=url.searchParams.get('access');
@@ -58,7 +57,6 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
       }
       if(!logged&&!mediaAccess)return json(401,{error:'请先输入访问密码'});
       if(url.pathname==='/api/logout'&&req.method==='POST'){sessions.delete(token);res.setHeader('Set-Cookie',`${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);return json(200,{ok:true});}
-      if(url.pathname==='/api/device/status'&&req.method==='GET'){const status=storedDeviceStatus();return json(200,{status,registered:status==='registered'});}
       if(!['GET','HEAD'].includes(req.method))return json(405,{error:'请求方式不支持'});
       const page=Number(url.searchParams.get('page')||1);
       if(!Number.isInteger(page)||page<1||page>100)return json(400,{error:'页码无效'});
@@ -71,15 +69,24 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
       if(detail)return json(200,await source.detail(detail[1]));
       const play=url.pathname.match(/^\/api\/episodes\/(\d{1,30})\/play$/);
       if(play){
-        const id=crypto.randomBytes(24).toString('hex');const media=await source.stream(play[1],true);
+        const format=url.searchParams.get('format')||'hls';if(!['hls','mp4'].includes(format))return json(400,{error:'不支持的播放格式'});
+        const id=crypto.randomBytes(24).toString('hex');const media=await source.stream(play[1],true,format);
         const access=crypto.randomBytes(24).toString('hex');
         streams.set(id,{owner:token,access,media,expires:Date.now()+30*60_000});
         while(streams.size>24)streams.delete(streams.keys().next().value);
-        return json(200,{path:'/media/'+id+'?access='+access,bytes:media.total,episode:play[1]});
+        return json(200,{path:'/media/'+id+(media.kind==='hls'?'/index.m3u8':'')+'?access='+access,kind:media.kind||'mp4',bytes:media.total,episode:play[1]});
       }
-      const stream=url.pathname.match(/^\/media\/([a-f0-9]{48})$/);
+      const stream=mediaRequest;
       if(stream){
         const entry=streams.get(stream[1]);if(!entry||(!mediaAccess&&entry.owner!==token)||entry.expires<Date.now()||!sessions.has(entry.owner))return json(410,{error:'播放地址已过期，请重新选集'});
+        if(entry.media.kind==='hls'){
+          if(!stream[2])return json(404,{error:'没有这个媒体文件'});
+          let data=await entry.media.asset(stream[2]);
+          const playlist=stream[2]==='index.m3u8';
+          if(playlist)data=Buffer.from(data.toString('utf8').replace(/^(segment-\d{5}\.ts)$/gm,'$1?access='+entry.access));
+          res.writeHead(200,{...headers,'Content-Type':playlist?'application/vnd.apple.mpegurl':'video/mp2t','Content-Length':data.length});
+          return res.end(req.method==='HEAD'?undefined:data);
+        }
         const total=entry.media.total;const match=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range||'');
         if(req.headers.range&&!match){res.writeHead(416,{...headers,'Content-Range':`bytes */${total}`});return res.end();}
         let start=0,end=total-1;
@@ -98,7 +105,6 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
       console.error(JSON.stringify({event:'request_failed',path:url.pathname,code:error.code||'UPSTREAM_ERROR'}));
       if(res.headersSent)return res.destroy();
       if(error.code==='DEVICE_REGISTRATION_REJECTED')return json(424,{error:'当前片源连接未完成，请等待修复。重复点击暂时不能恢复播放。',code:error.code});
-      if(error.code==='DEVICE_REGISTRATION_TRANSPORT')return json(424,{error:'片源授权网络异常，请检查网络或代理后重试。',code:error.code});
       return json(424,{error:'片源暂不可用，请稍后重试。网页不会用预览片代替完整内容。'});
     }
   });

@@ -31,3 +31,25 @@ test('登录保护、同源校验、完整和分段视频以及会话隔离',asy
   assert.equal((await call(play.path)).status,401);
  }finally{app.closeAllConnections();await new Promise(resolve=>app.close(resolve));}
 });
+
+test('分段播放清单携带短期令牌，分片仍需授权且退出立即撤销',async()=>{
+ const requested=[];
+ const app=createApp({password,source:{...source,stream:async()=>({kind:'hls',asset:async name=>{requested.push(name);return Buffer.from(name==='index.m3u8'?'#EXTM3U\n#EXTINF:2,\nsegment-00000.ts\n':'real segment bytes');}})}});
+ app.listen(0,'127.0.0.1');await once(app,'listening');const base='http://127.0.0.1:'+app.address().port;
+ try{
+  const login=await fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
+  const cookie=login.headers.get('set-cookie').split(';')[0];
+  const play=await (await fetch(base+'/api/episodes/456/play',{headers:{Cookie:cookie}})).json();assert.equal(play.kind,'hls');
+  const playlist=await fetch(base+play.path);assert.equal(playlist.status,200);assert.match(playlist.headers.get('content-type'),/mpegurl/);
+  const text=await playlist.text();assert.match(text,/segment-00000\.ts\?access=[a-f0-9]{48}/);
+  const segmentPath=new URL(text.split('\n').find(line=>line.startsWith('segment-')),base+play.path);
+  assert.equal(await (await fetch(segmentPath)).text(),'real segment bytes');
+  assert.equal((await fetch(segmentPath.pathname.startsWith('/')?base+segmentPath.pathname:segmentPath.pathname)).status,401);
+  assert.equal((await fetch(base+play.path.replace('index.m3u8','secret.json'))).status,401);
+  const other=await fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
+  assert.equal((await fetch(segmentPath,{headers:{Cookie:other.headers.get('set-cookie').split(';')[0]}})).status,410);
+  await fetch(base+'/api/logout',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:'{}'});
+  assert.equal((await fetch(segmentPath)).status,401);
+  assert.deepEqual(requested,['index.m3u8','segment-00000.ts']);
+ }finally{app.closeAllConnections();await new Promise(resolve=>app.close(resolve));}
+});

@@ -5,6 +5,7 @@ import axios from "axios";
 import {getDevice,userAgent} from './device.mjs';
 import {createInitializationCache} from './device-state.mjs';
 import {browserCompatible,cachedBrowserMedia} from './transcode.mjs';
+import {progressiveMedia,cachedProgressive} from './progressive.mjs';
 import {playbackPayload} from './playback-request.mjs';
 
 // Trusted, pinned GPL source. This is a compatibility wrapper, not a sandbox for user scripts.
@@ -135,31 +136,33 @@ export const provider = {
       throw new Error("分集数据异常");
     return { ...card(api.itemToCard(series)), id, episodes };
   },
-  stream(id,fresh=false){
-    if(streamJobs.has(id))return streamJobs.get(id);
+  stream(id,fresh=false,format='hls'){
+    const key=id+'|'+format;
+    if(streamJobs.has(key))return streamJobs.get(key);
     if(streamJobs.size>=8)return Promise.reject(Error('准备队列已满，请稍后再试'));
-    const job=this.prepareStream(id,fresh).finally(()=>streamJobs.delete(id));streamJobs.set(id,job);return job;
+    const job=this.prepareStream(id,fresh,format).finally(()=>streamJobs.delete(key));streamJobs.set(key,job);return job;
   },
-  async prepareStream(id, fresh = false) {
-    if(process.env.HGTV_FFMPEG){const cached=await cachedBrowserMedia(id);if(cached)return cached;}
+  async prepareStream(id, fresh = false,format='hls') {
+    if(process.env.HGTV_FFMPEG){const cached=format==='mp4'?await cachedBrowserMedia(id):await cachedProgressive(id);if(cached)return cached;}
     if (fresh) {
       api.streamCache.delete(`${id}|auto`);
       api.videoInfoCache.delete(id);
     }
     const quality=await freshInfo(id);
     const stream=await api.resolveStream(id,quality);
-    const prepared = await api.prepareHeader(stream);
+    const retry=async task=>{try{return await task();}catch(error){if(!['ETIMEDOUT','ECONNABORTED','ECONNRESET','EAI_AGAIN'].includes(error.code))throw error;return task();}};
+    const prepared = await retry(()=>api.prepareHeader(stream));
     const media = {
       total: prepared.total,
       chunk: async (start, end) =>
         api.decryptPartial(
-          (await api.remoteRange(stream, start, end)).data,
+          (await retry(()=>api.remoteRange(stream, start, end))).data,
           start,
           stream.key,
           prepared
         ),
     };
-    return process.env.HGTV_FFMPEG?browserCompatible(id,media):media;
+    return process.env.HGTV_FFMPEG?(format==='mp4'?browserCompatible(id,media):progressiveMedia(id,media)):media;
   },
 };
 
