@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {provider} from './provider.mjs';
+import {storedDeviceStatus} from './device.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const sessions=new Map(), streams=new Map(), attempts=new Map();
@@ -42,7 +43,7 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
         return json(200,{ok:true});
       }
       if(url.pathname==='/api/session')return json(200,{authenticated:logged});
-      if(url.pathname==='/health')return json(200,{service:'hongguo-web',status:'running',playback:'unverified'});
+      if(url.pathname==='/health')return json(200,{service:'hongguo-web',status:'running',playback:'unverified',device:storedDeviceStatus()});
       const files={'/':'index.html','/app.js':'app.js','/style.css':'style.css'};
       if(files[url.pathname] && ['GET','HEAD'].includes(req.method)){
         const file=files[url.pathname],content=await fs.readFile(path.join(root,'public',file));
@@ -57,6 +58,7 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
       }
       if(!logged&&!mediaAccess)return json(401,{error:'请先输入访问密码'});
       if(url.pathname==='/api/logout'&&req.method==='POST'){sessions.delete(token);res.setHeader('Set-Cookie',`${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);return json(200,{ok:true});}
+      if(url.pathname==='/api/device/status'&&req.method==='GET'){const status=storedDeviceStatus();return json(200,{status,registered:status==='registered'});}
       if(!['GET','HEAD'].includes(req.method))return json(405,{error:'请求方式不支持'});
       const page=Number(url.searchParams.get('page')||1);
       if(!Number.isInteger(page)||page<1||page>100)return json(400,{error:'页码无效'});
@@ -96,6 +98,7 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
       console.error(JSON.stringify({event:'request_failed',path:url.pathname,code:error.code||'UPSTREAM_ERROR'}));
       if(res.headersSent)return res.destroy();
       if(error.code==='DEVICE_REGISTRATION_REJECTED')return json(424,{error:'当前片源连接未完成，请等待修复。重复点击暂时不能恢复播放。',code:error.code});
+      if(error.code==='DEVICE_REGISTRATION_TRANSPORT')return json(424,{error:'片源授权网络异常，请检查网络或代理后重试。',code:error.code});
       return json(424,{error:'片源暂不可用，请稍后重试。网页不会用预览片代替完整内容。'});
     }
   });
