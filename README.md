@@ -26,7 +26,40 @@ npm start
 
 Windows 可在 `.local-runtime.json` 保存 `{ "ffmpeg": "C:/tools/ffmpeg.exe" }`，启动脚本会加载。该文件不提交 Git。
 
-当前电脑已有设备状态 `.device.json`，不需要连接手机。全新部署仍需有效设备状态；平台注册接口目前可能返回零编号，不能保证新环境自动初始化成功。已有状态失效后也可能需要重新初始化，这是剩余限制。不要把个人设备状态公开提交。
+当前电脑已有设备状态 `.device.json`，不需要连接手机。平台注册接口由多个前端域名提供，本程序依次尝试 `log`/`is`/`api-snssdk` 等入口并在传输失败时回退，单个入口抖动不再直接导致授权失败。若所有入口都返回零编号（平台限流或风控），会明确提示“片源连接未完成”，不会盲重试。已有状态失效后删除 `.device.json` 重新播放即可触发重新授权。不要把个人设备状态公开提交。
+
+## 片源授权与设备注册
+
+“片源授权”指设备向平台注册、取得有效 `device_id`/`install_id`，随后签名请求才能拉到可播放的视频源。本程序把这一环节做厚：
+
+- **多入口容灾**：默认依次尝试多个注册域名，任一可用即完成授权。
+- **预置已注册设备**：全新部署或注册被拦截时，可直接用已有的有效编号跳过网络注册：
+
+```powershell
+$env:HGTV_DEVICE_ID = '1905892595378490'     # 有效 device_id（纯数字，首位非 0）
+$env:HGTV_INSTALL_ID = '1905892595382586'    # 有效 install_id
+$env:HGTV_DEVICE_COOKIES = ''                # 可选，原注册响应里的会话 Cookie
+npm start
+```
+
+也可把一份完整的设备 JSON 通过 `HGTV_DEVICE_JSON` 指向文件路径注入。
+
+- **状态可见**：`/health` 新增 `device` 字段（`registered`/`missing`/`invalid`），登录后 `/api/device/status` 返回同样的授权状态，便于在车机端确认片源授权是否就绪。
+- **错误分流**：网络/超时归为 `DEVICE_REGISTRATION_TRANSPORT`（提示检查网络或代理），平台拒发编号归为 `DEVICE_REGISTRATION_REJECTED`（提示等待修复），不再混为一谈。
+
+相关环境变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `HGTV_DEVICE_ID` / `HGTV_INSTALL_ID` | 无 | 注入已注册设备编号，跳过网络注册 |
+| `HGTV_DEVICE_COOKIES` | 无 | 注入设备时附带的会话 Cookie |
+| `HGTV_DEVICE_JSON` | 无 | 指向完整设备 JSON 文件，注入设备状态 |
+| `HGTV_DEVICE_FILE` | `./.device.json` | 本机设备状态的保存路径（也用于测试隔离） |
+| `HGTV_REGISTER_ENDPOINTS` | 多个 snssdk 域名 | 逗号分隔，覆盖默认注册入口 |
+| `HGTV_REGISTER_ATTEMPTS` | `2` | 单个入口的传输层重试次数 |
+| `HGTV_REGISTER_BACKOFF_MS` | `1000` | 重试之间的退避毫秒数 |
+
+恢复授权：删除 `.device.json`（或 `HGTV_DEVICE_FILE` 指向的文件），下一次播放会重新向平台注册。
 
 ## 外网与车机
 
