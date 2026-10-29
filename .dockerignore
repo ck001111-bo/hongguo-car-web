@@ -10,3 +10,5 @@ bin
 
 .local-runtime.json
 .git
+
+.player-config.json

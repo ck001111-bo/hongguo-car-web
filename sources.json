@@ -1,0 +1,24 @@
+[
+  {
+    "key": "liangzi",
+    "name": "量子公开采集接口",
+    "api": "https://cj.lziapi.com/api.php/provide/vod/",
+    "enabled": true,
+    "discovery": "https://github.com/hafrey1/LunaTV-config",
+    "note": "第三方接口，非开源视频版权授权；逐集可用性需要验证"
+  },
+  {
+    "key": "zuida",
+    "name": "最大公开采集接口",
+    "api": "https://api.zuidapi.com/api.php/provide/vod",
+    "enabled": true,
+    "discovery": "https://github.com/hafrey1/LunaTV-config"
+  },
+  {
+    "key": "jinying",
+    "name": "金鹰公开采集接口",
+    "api": "https://jinyingzy.com/api.php/provide/vod",
+    "enabled": true,
+    "discovery": "https://github.com/hafrey1/LunaTV-config"
+  }
+]

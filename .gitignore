@@ -10,3 +10,5 @@ access.txt
 .local-runtime.json
 bin/*.exe
 tools/**/*.apk
+
+.player-config.json

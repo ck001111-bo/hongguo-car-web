@@ -6,6 +6,8 @@ import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {provider} from './provider.mjs';
+import {alternateSearch,alternateDetail} from './alternate-sources.mjs';
+import {playerResponse} from './player-api.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const sessions=new Map(), streams=new Map(), attempts=new Map();
@@ -14,10 +16,10 @@ const COOKIE='hg_session';
 const MAX_SESSION=7*24*3600_000;
 const hash=x=>crypto.createHash('sha256').update(x).digest();
 const same=(a,b)=>crypto.timingSafeEqual(hash(a),hash(b));
-export function createApp({source=provider,password,secureCookie=false}={}) {
+export function createApp({source=provider,password,secureCookie=false,playerKey=null}={}) {
   if(!password || password.length<12) throw Error('访问密码至少需要 12 个字符');
   const server=http.createServer(async(req,res)=>{
-    const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
+    const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; media-src 'self' blob: https:; worker-src 'self' blob:; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"};
     const json=(status,value)=>{res.writeHead(status,{...headers,'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value));};
     let url;
     try{url=new URL(req.url,'http://localhost');}catch{return json(400,{error:'请求地址无效'});}
@@ -59,11 +61,18 @@ export function createApp({source=provider,password,secureCookie=false}={}) {
         const owner=entry&&sessions.get(entry.owner);
         mediaAccess=!!entry&&entry.expires>Date.now()&&!!owner&&owner.expires>Date.now()&&typeof access==='string'&&same(access,entry.access);
       }
+      if(['/player/api','/player/config'].includes(url.pathname)&&playerKey){
+        if(!same(url.searchParams.get('key')||'',playerKey))return json(401,{error:'播放器密钥无效'});
+        if(url.pathname==='/player/config'){const api=new URL('/player/api',`https://${req.headers.host}`);api.searchParams.set('key',playerKey);return json(200,{sites:[{key:'hongguo-local',name:'红果·独立电脑后台',type:1,api:api.href,searchable:1,quickSearch:1,filterable:0}]});}
+        return playerResponse({url,req,res,json,source,headers,streams,sessions,owner:'player:'+hash(playerKey).toString('hex')});
+      }
       if(!logged&&!mediaAccess)return json(401,{error:'请先输入访问密码'});
       if(url.pathname==='/api/logout'&&req.method==='POST'){sessions.delete(token);res.setHeader('Set-Cookie',`${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);return json(200,{ok:true});}
       if(!['GET','HEAD'].includes(req.method))return json(405,{error:'请求方式不支持'});
       const page=Number(url.searchParams.get('page')||1);
       if(!Number.isInteger(page)||page<1||page>100)return json(400,{error:'页码无效'});
+      if(url.pathname==='/api/alternates'){const q=(url.searchParams.get('q')||'').trim();if(!q||q.length>80)return json(400,{error:'请输入剧名'});return json(200,await alternateSearch(q));}
+      const alternate=url.pathname.match(/^\/api\/alternates\/([a-z0-9-]{1,100})$/);if(alternate)return json(200,await alternateDetail(alternate[1]));
       if(url.pathname==='/api/home')return json(200,await source.home(page));
       if(url.pathname==='/api/search'){
         const q=(url.searchParams.get('q')||'').trim();if(!q||q.length>80)return json(400,{error:'请输入 1–80 字的剧名'});
@@ -122,6 +131,8 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   if(encoder.status!==0)throw Error('未找到 FFmpeg，请先安装并设置 HGTV_FFMPEG 或 .local-runtime.json');
   let config={};try{config=JSON.parse(await fs.readFile(path.join(root,'.private-config.json'),'utf8'));}catch{}
   if(!config.password&&!process.env.APP_PASSWORD){config.password=crypto.randomBytes(18).toString('base64url');await fs.writeFile(path.join(root,'.private-config.json'),JSON.stringify(config));}
-  const app=createApp({password:process.env.APP_PASSWORD||config.password,secureCookie:process.env.COOKIE_SECURE==='1'});
+  let playerConfig={};try{playerConfig=JSON.parse(await fs.readFile(path.join(root,'.player-config.json'),'utf8'));}catch{}
+  if(!playerConfig.key){playerConfig.key=crypto.randomBytes(32).toString('hex');await fs.writeFile(path.join(root,'.player-config.json'),JSON.stringify(playerConfig));}
+  const app=createApp({playerKey:playerConfig.key,password:process.env.APP_PASSWORD||config.password,secureCookie:process.env.COOKIE_SECURE==='1'});
   app.listen(Number(process.env.PORT||8790),process.env.HOST||'127.0.0.1',()=>console.log('红果网页已启动：http://127.0.0.1:'+(process.env.PORT||8790)));
 }
